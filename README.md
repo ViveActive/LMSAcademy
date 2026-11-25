@@ -1,7 +1,8 @@
 # LMSacademy: voortgangsrapportage naast The Huddle
 
 The Huddle blijft het platform voor leden. Deze app vangt de webhooks van Huddle op en toont
-prestaties, voortgang en activiteit van leden op drie niveaus: **totaal**, **per groep** en **per lid**.
+prestaties, voortgang en activiteit van leden op drie niveaus: **totaal**, **per groep** en **per lid**,
+en per **opleiding** wie ingeschreven is, hoe ver iedereen is en welke certificaten behaald of nog te behalen zijn.
 
 ```
 The Huddle ──webhook──▶ Supabase Edge Function ──▶ Postgres (ruwe events → overzichtstabellen → views)
@@ -21,6 +22,20 @@ CSV-export leden (eenmalig) ──scripts/import-csv.mjs────────
 | `dashboard/` | Het dashboard (HTML/JS, geen build-stap). Zonder `config.js` draait het met demodata |
 | `test/` | Tests en verzonnen demodata |
 
+## Opleidingen en certificaten
+
+Een opleiding is een cursus in Huddle. Opleidingen en hun modules verschijnen vanzelf zodra Huddle er een
+gebeurtenis over stuurt. Stel daarna per opleiding in welk certificaat je ermee behaalt en hoe lang het geldig is:
+
+```sql
+update courses set certificate_name = 'Mastertrainer', cert_geldig_maanden = 24, position = 1
+ where name = 'Mastertrainer opleiding';
+update modules set required = false where name = 'Clubcultuur en communicatie';  -- keuzemodule
+```
+
+Per lid per opleiding toont het dashboard de stand (bezig, vastgelopen, afgerond), de voortgang over de verplichte
+modules en het certificaat (behaald, verloopt binnenkort, verlopen of nog te behalen).
+
 ## Wat "actief" betekent
 
 Huddle meldt via webhooks alleen **leergebeurtenissen**: cursus of module gestart/voltooid, quiz
@@ -36,7 +51,7 @@ Webhooks melden alleen wat er na het aanzetten gebeurt. Oudere voortgang zit er 
 
 1. Maak een project aan (regio EU, bijv. Frankfurt).
 2. Voer de migraties uit: `supabase link --project-ref <ref>` en `supabase db push`
-   (of plak de drie bestanden uit `supabase/migrations/` op volgorde in de SQL-editor).
+   (of plak de bestanden uit `supabase/migrations/` op volgorde in de SQL-editor).
 3. Zet het geheim voor de webhook en deploy de functie:
    ```
    supabase secrets set HUDDLE_WEBHOOK_TOKEN=<lange willekeurige tekst>

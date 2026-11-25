@@ -89,6 +89,24 @@ begin
   select * into r from v_group_summary where group_id = 'lvl-mt';
   if r.leden <> 3 then raise exception 'groep MT leden %', r.leden; end if;
 
+  -- Opleidingen en certificaten
+  update courses set certificate_name = 'Mastertrainer', cert_geldig_maanden = 12 where id = 'c1';
+  select * into r from v_course_enrollment where member_id = 'u1' and course_id = 'c1';
+  if r.certificaat_status <> 'Open' or r.voortgang_pct <> 50 or r.opleiding_status <> 'Bezig' then
+    raise exception 'Anna opleiding: % % %', r.certificaat_status, r.voortgang_pct, r.opleiding_status; end if;
+  select * into r from v_course_enrollment where member_id = 'u4' and course_id = 'c1';
+  if r.certificaat_status <> 'Behaald' or r.opleiding_status <> 'Afgerond'
+     or r.certificaat_geldig_tot::date <> (r.certificaat_datum + interval '12 months')::date then
+    raise exception 'Dirk opleiding: % % %', r.certificaat_status, r.opleiding_status, r.certificaat_geldig_tot; end if;
+  select * into r from v_course_enrollment where member_id = 'u2' and course_id = 'c1';
+  if r.opleiding_status <> 'Vastgelopen' then raise exception 'Bram opleiding %', r.opleiding_status; end if;
+  select * into r from v_course_summary where course_id = 'c1';
+  if r.ingeschreven <> 3 or r.afgerond <> 1 or r.gecertificeerd <> 1 or r.cert_open <> 2 then
+    raise exception 'opleiding c1: % % % %', r.ingeschreven, r.afgerond, r.gecertificeerd, r.cert_open; end if;
+  select * into r from v_member_status where huddle_id = 'u1';
+  if r.certificaten_open <> 1 or r.certificaten_behaald <> 0 or r.opleidingen <> 1 then
+    raise exception 'Anna certificaten: % %', r.certificaten_open, r.certificaten_behaald; end if;
+
   if exists (select 1 from huddle_events where error is not null) then
     raise exception 'verwerkingsfout: %', (select error from huddle_events where error is not null limit 1); end if;
 end $$;

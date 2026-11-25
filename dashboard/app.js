@@ -66,7 +66,7 @@
       return d;
     }
     const names = ["v_totals", "v_group_summary", "v_member_status", "v_module_progress", "v_module_funnel",
-                   "v_weekly_activity", "groups", "modules", "settings"];
+                   "v_weekly_activity", "v_course_enrollment", "v_course_summary", "courses", "groups", "modules", "settings"];
     const results = await Promise.all(names.map((n) => fetchAll(n)));
     const d = Object.fromEntries(names.map((n, i) => [n, results[i]]));
     d.memberships = await fetchAll("memberships", { filter: (q) => q.is("until", null) });
@@ -87,7 +87,9 @@
     const ids = new Set(DATA.memberships.filter((m) => m.group_id === groupId).map((m) => m.member_id));
     return DATA.v_member_status.filter((m) => ids.has(m.huddle_id));
   };
-  const orderedModules = () => [...DATA.modules].sort((a, b) => (a.position ?? 999) - (b.position ?? 999) || a.name.localeCompare(b.name));
+  const coursePos = (id) => { const c = (DATA.courses || []).find((x) => x.id === id); return c && c.position != null ? c.position : 999; };
+  const orderedModules = (courseId) => [...DATA.modules].filter((m) => !courseId || m.course_id === courseId)
+    .sort((a, b) => coursePos(a.course_id) - coursePos(b.course_id) || String(a.course_id).localeCompare(String(b.course_id)) || (a.position ?? 999) - (b.position ?? 999) || a.name.localeCompare(b.name));
 
   function summarize(members) {
     const n = members.length;
@@ -105,12 +107,18 @@
     };
   }
 
-  function funnelFor(memberIds) {
+  const orderedCourses = () => [...DATA.v_course_summary].sort((a, b) => (a.position ?? 999) - (b.position ?? 999) || a.opleiding.localeCompare(b.opleiding));
+  const enrollmentsOf = (memberId) => DATA.v_course_enrollment.filter((e) => e.member_id === memberId);
+  const CERT_CLASS = { "Behaald": "Actief", "Verloopt binnenkort": "Afnemend", "Verlopen": "Uitgevallen", "Open": "Nooit", "Geen certificaat": "Nooit" };
+  const OPL_CLASS = { "Afgerond": "Actief", "Bezig": "Afnemend", "Vastgelopen": "Inactief" };
+  const pill = (text, cls) => `<span class="badge st-${cls}">${esc(text)}</span>`;
+
+  function funnelFor(memberIds, courseId) {
     const rows = memberIds ? DATA.v_module_progress.filter((r) => memberIds.has(r.member_id)) : DATA.v_module_progress;
-    return orderedModules().map((m, i) => {
+    return orderedModules(courseId).map((m, i) => {
       const r = rows.filter((x) => x.module_id === m.id);
       const uniq = (f) => new Set(r.filter(f).map((x) => x.member_id)).size;
-      return { ...m, nr: i + 1, gestart: uniq((x) => x.started_at), voltooid: uniq((x) => x.completed_at), vast: uniq((x) => x.vastgelopen) };
+      return { ...m, nr: (m.position ?? i + 1), gestart: uniq((x) => x.started_at), voltooid: uniq((x) => x.completed_at), vast: uniq((x) => x.vastgelopen) };
     });
   }
 
@@ -157,13 +165,18 @@
       <div class="weeks" role="img" aria-label="Aantal actieve leden per week">${cols}</div><div class="weeklabels">${labels}</div></div>`;
   }
 
-  function funnelCard(memberIds, title = "Waar haken mensen af?") {
-    const f = funnelFor(memberIds);
+  function funnelCard(memberIds, title = "Waar haken mensen af?", courseId) {
+    const f = funnelFor(memberIds, courseId);
     const max = Math.max(1, ...f.map((m) => m.gestart));
-    const rows = f.map((m) => `<div class="row"><div><strong>${m.nr}. ${esc(m.name)}</strong>${m.required ? "" : ' <small class="note">(keuze)</small>'}</div><div>
+    let lastCourse = null;
+    const rows = f.map((m) => {
+      const head = !courseId && m.course_id !== lastCourse ? `<div class="lbl" style="margin-top:${lastCourse === null ? 0 : 8}px">${esc((DATA.courses.find((c) => c.id === m.course_id) || {}).name || "Zonder opleiding")}</div>` : "";
+      lastCourse = m.course_id;
+      return head + `<div class="row"><div><strong>${m.nr}. ${esc(m.name)}</strong>${m.required ? "" : ' <small class="note">(keuze)</small>'}</div><div>
         <div class="bar"><div class="track" style="height:10px"><div style="width:${(100 * m.gestart) / max}%;background:var(--started)"></div></div><span>${m.gestart} gestart</span></div>
         <div class="bar"><div class="track" style="height:10px"><div style="width:${(100 * m.voltooid) / max}%;background:var(--done)"></div></div><span>${m.voltooid} voltooid${m.vast ? ` · ${m.vast} vast` : ""}</span></div>
-      </div></div>`).join("");
+      </div></div>`;
+    }).join("");
     return `<div class="card"><div class="cardhead"><h2>${esc(title)}</h2></div>
       <p class="note" style="margin:0 0 12px">Per module: hoeveel leden zijn gestart en hoeveel hebben afgerond. "Vast" = gestart, niet afgerond en ${esc(setting("vastgelopen_dagen"))} dagen geen activiteit.</p>
       <div class="funnel">${rows || '<p class="empty">Nog geen modulegegevens ontvangen.</p>'}</div></div>`;
@@ -183,7 +196,7 @@
     const st = state.sort;
     const cols = [
       ["naam", "Naam"], ...(showGroup ? [["groepen", "Groep"]] : []), ["status", "Status"], ["dagen_inactief", "Laatst actief"],
-      ["voortgang_pct", "Voortgang"], ["quiz_slagingspct", "Toetsen"], ["certificaat_status", "Certificaat"],
+      ["voortgang_pct", "Voortgang"], ["quiz_slagingspct", "Toetsen"], ["certificaten_behaald", "Certificaten"],
     ];
     const sorted = [...members].sort(by(st.key, st.dir));
     const head = cols.map(([k, l]) => `<th scope="col"><button data-sort="${k}">${esc(l)}${st.key === k ? (st.dir > 0 ? " ↑" : " ↓") : ""}</button></th>`).join("");
@@ -194,7 +207,7 @@
         <td>${esc(ago(m.dagen_inactief))}</td>
         <td style="min-width:140px">${progressBar(m.voortgang_pct)}</td>
         <td>${m.quizpogingen ? `${m.quiz_gehaald}/${m.quizpogingen}` : "–"}</td>
-        <td>${esc(m.certificaat_status)}${m.certificaat_geldig_tot && m.certificaat_status !== "Geen" ? `<small>tot ${esc(fmtDate(m.certificaat_geldig_tot))}</small>` : ""}</td>
+        <td>${m.certificaten_behaald} behaald${m.certificaten_open ? `<small>${m.certificaten_open} nog te behalen</small>` : ""}</td>
       </tr>`).join("");
     return `<div class="tablewrap"><table><thead><tr>${head}</tr></thead><tbody>${rows || `<tr><td colspan="${cols.length}" class="empty">Geen leden gevonden.</td></tr>`}</tbody></table></div>`;
   }
@@ -223,6 +236,7 @@
     return `<div class="pagehead"><div><h1>Overzicht</h1><p class="sub">Alle groepen · ${s.n} leden</p></div></div>
       ${kpiCards(s, "alle leden")}
       <div class="grid two">${statusDistribution(s)}${weeklyChart(null)}</div>
+      ${courseTable(null)}
       ${attentionCard(all)}
       <div class="card"><div class="cardhead"><h2>Per groep</h2><a href="#/groepen">Alle groepen</a></div>
         <div class="tablewrap"><table><thead><tr><th>Groep</th><th>Leden</th><th>Activiteit</th><th>Gem. voortgang</th><th>Toetsen</th><th>Gecertificeerd</th></tr></thead>
@@ -254,6 +268,7 @@
         <div class="pagehead"><div><h1>${esc(g.name)}</h1><p class="sub">${esc(g.kind || "Groep")} · ${s.n} leden${g.coach ? " · begeleid door " + esc(g.coach) : ""}</p></div></div></div>
       ${kpiCards(s, "deze groep")}
       <div class="grid two">${statusDistribution(s)}${weeklyChart(ids)}</div>
+      ${(state.groupCtx = id, courseTable(ids, "Opleidingen in deze groep"))}
       <div class="card"><div class="cardhead"><h2>Leden</h2></div>${memberTable(members, { showGroup: false })}</div>
       ${funnelCard(ids, "Modules in deze groep")}`;
   }
@@ -284,7 +299,8 @@
     const m = DATA.v_member_status.find((x) => x.huddle_id === id);
     if (!m) return `<a class="back" href="#/leden">← Leden</a><p>Lid niet gevonden.</p>`;
     const prog = DATA.v_module_progress.filter((r) => r.member_id === id);
-    const mods = orderedModules().map((mod, i) => {
+    const enr = enrollmentsOf(id);
+    const modRow = (mod, i) => {
       const p = prog.find((r) => r.module_id === mod.id);
       let label = "Niet gestart", color = "var(--muted)", w = 0;
       if (p && p.completed_at) { label = `Voltooid ${fmtDate(p.completed_at)}`; color = "var(--s-actief)"; w = 100; }
@@ -293,6 +309,18 @@
       return `<div class="item"><div><strong>${i + 1}. ${esc(mod.name)}</strong>${mod.required ? "" : ' <small class="note">(keuze)</small>'}</div>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end"><span class="mod-state" style="color:${color}">${esc(label)}</span>
         <div class="track" style="max-width:80px"><div style="width:${w}%;background:${color}"></div></div></div></div>`;
+    };
+        const mods = enr.length
+      ? enr.map((e) => `<div class="lbl" style="margin-top:12px">${esc(e.opleiding)} · ${num(e.voortgang_pct)}%</div>` + orderedModules(e.course_id).map(modRow).join("")).join("")
+      : orderedModules().filter((mod) => prog.some((r) => r.module_id === mod.id)).map(modRow).join("");
+    const certs = orderedCourses().filter((c) => c.certificate_name || enr.some((e) => e.course_id === c.course_id)).map((c) => {
+      const e = enr.find((x) => x.course_id === c.course_id);
+      const st = e ? e.certificaat_status : "Open";
+      const detail = !e ? "Nog niet aan begonnen"
+        : e.certificaat_datum ? `Behaald ${fmtDate(e.certificaat_datum)}, geldig tot ${fmtDate(e.certificaat_geldig_tot)}`
+        : `${e.opleiding_status}, ${num(e.voortgang_pct)}% van de opleiding`;
+      return `<div class="item"><div><strong>${esc(c.certificate_name || c.opleiding)}</strong><div class="note" style="margin:0">${esc(c.opleiding)} · ${esc(detail)}</div></div>
+        ${pill(e ? st : "Niet gestart", CERT_CLASS[e ? st : "Open"] || "Nooit")}</div>`;
     }).join("");
     const weeks = weekStarts();
     const wa = DATA.v_weekly_activity.filter((r) => r.member_id === id);
@@ -315,10 +343,13 @@
         <div class="card"><div class="lbl">Laatst actief</div><div class="big" style="font-size:26px">${esc(ago(m.dagen_inactief))}</div><div class="note">${m.activiteit_4w} leergebeurtenissen in 4 weken</div></div>
         <div class="card"><div class="lbl">Voortgang</div><div class="big">${num(m.voortgang_pct)}%</div><div class="note">${m.modules_voltooid} modules voltooid, ${m.modules_open} open</div></div>
         <div class="card"><div class="lbl">Toetsen</div><div class="big">${m.quizpogingen ? `${m.quiz_gehaald}<small>/${m.quizpogingen}</small>` : "–"}</div><div class="note">${m.gem_quizscore ? `gem. score ${m.gem_quizscore}` : "gehaald / pogingen"}</div></div>
-        <div class="card"><div class="lbl">Certificaat</div><div class="big" style="font-size:26px">${esc(m.certificaat_status)}</div><div class="note">${m.certificaat_datum ? `uitgereikt ${esc(fmtDate(m.certificaat_datum))}, geldig tot ${esc(fmtDate(m.certificaat_geldig_tot))}` : "nog niet uitgereikt"}</div></div>
+        <div class="card"><div class="lbl">Certificaten</div><div class="big">${m.certificaten_behaald}<small> behaald</small></div><div class="note">${m.certificaten_open} nog te behalen</div></div>
       </div>
       <div class="grid two">
-        <div class="card"><div class="cardhead"><h2>Modules</h2></div><div class="list">${mods || '<p class="empty">Geen modules bekend.</p>'}</div></div>
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card"><div class="cardhead"><h2>Certificaten</h2></div><div class="list">${certs || '<p class="empty">Nog geen opleidingen met een certificaat.</p>'}</div></div>
+          <div class="card"><div class="cardhead"><h2>Opleidingen en modules</h2></div><div class="list">${mods || '<p class="empty">Nog niet aan een opleiding begonnen.</p>'}</div></div>
+        </div>
         <div style="display:flex;flex-direction:column;gap:16px">
           <div class="card"><div class="cardhead"><h2>Activiteit per week</h2><span class="note">12 weken, donkerder = meer</span></div><div class="heat" role="img" aria-label="Activiteit per week">${heat}</div>
             <div class="weeklabels" style="margin-top:6px"><span style="text-align:left">12 weken geleden</span><span style="text-align:right">deze week</span></div></div>
@@ -329,7 +360,7 @@
 
   function pageModules() {
     const f = funnelFor(null);
-    const rows = f.map((m) => `<tr><td><strong>${m.nr}. ${esc(m.name)}</strong></td>
+    const rows = f.map((m) => `<tr><td><strong>${m.nr}. ${esc(m.name)}</strong><small>${esc((DATA.courses.find((c) => c.id === m.course_id) || {}).name || "")}</small></td>
         <td><label class="inline"><input type="checkbox" data-required="${esc(m.id)}" ${m.required ? "checked" : ""}> verplicht</label></td>
         <td>${m.gestart}</td><td>${m.voltooid}</td><td>${m.vast}</td><td style="min-width:140px">${progressBar(pct(m.voltooid, m.gestart))}</td></tr>`).join("");
     return `<div class="pagehead"><div><h1>Modules</h1><p class="sub">Modules verschijnen vanzelf zodra Huddle er een gebeurtenis over stuurt</p></div></div>
@@ -341,10 +372,110 @@
       </div><p class="note">Aan te passen in de tabel <code>settings</code> in Supabase.</p></div>`;
   }
 
+  // ---------------------------------------------------------------- opleidingen
+  function courseStats(courseId, memberIds) {
+    const rows = DATA.v_course_enrollment.filter((e) => e.course_id === courseId && (!memberIds || memberIds.has(e.member_id)));
+    const c = (f) => rows.filter(f).length;
+    const prog = rows.filter((e) => e.voortgang_pct !== null && e.voortgang_pct !== undefined);
+    return {
+      rows, n: rows.length,
+      bezig: c((e) => e.opleiding_status === "Bezig"), vast: c((e) => e.opleiding_status === "Vastgelopen"), afgerond: c((e) => e.opleiding_status === "Afgerond"),
+      voortgang: prog.length ? Math.round(prog.reduce((a, e) => a + Number(e.voortgang_pct), 0) / prog.length) : null,
+      behaald: c((e) => e.certificaat_status === "Behaald" || e.certificaat_status === "Verloopt binnenkort"),
+      verloopt: c((e) => e.certificaat_status === "Verloopt binnenkort"),
+      verlopen: c((e) => e.certificaat_status === "Verlopen"),
+      open: c((e) => e.certificaat_status === "Open"),
+    };
+  }
+
+  function stateStack(st) {
+    return `<div class="stack" style="height:10px" role="img" aria-label="${st.afgerond} afgerond, ${st.bezig} bezig, ${st.vast} vastgelopen">
+      <div class="c-Actief" style="width:${pct(st.afgerond, st.n)}%"></div><div class="c-Afnemend" style="width:${pct(st.bezig, st.n)}%"></div><div class="c-Inactief" style="width:${pct(st.vast, st.n)}%"></div></div>`;
+  }
+
+  function courseTable(memberIds, title = "Opleidingen") {
+    const rows = orderedCourses().map((c) => {
+      const st = courseStats(c.course_id, memberIds);
+      const link = `#/opleiding/${encodeURIComponent(c.course_id)}${memberIds && state.groupCtx ? "?groep=" + encodeURIComponent(state.groupCtx) : ""}`;
+      return `<tr class="click" data-href="${link}">
+        <td><a href="${link}">${esc(c.opleiding)}</a><small>${c.certificate_name ? "Certificaat " + esc(c.certificate_name) : "Geen certificaat ingesteld"}</small></td>
+        <td>${st.n}</td>
+        <td style="min-width:180px">${stateStack(st)}<small>${st.afgerond} afgerond · ${st.bezig} bezig · ${st.vast} vastgelopen</small></td>
+        <td style="min-width:140px">${progressBar(st.voortgang)}</td>
+        <td>${st.behaald} behaald<small>${st.open} nog te behalen${st.verloopt ? ` · ${st.verloopt} verloopt binnenkort` : ""}</small></td></tr>`;
+    }).join("");
+    return `<div class="card"><div class="cardhead"><h2>${esc(title)}</h2><a href="#/opleidingen">Alle opleidingen</a></div>
+      <div class="tablewrap"><table><thead><tr><th>Opleiding</th><th>Ingeschreven</th><th>Stand</th><th>Gem. voortgang</th><th>Certificaten</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="5" class="empty">Nog geen opleidingen ontvangen.</td></tr>'}</tbody></table></div></div>`;
+  }
+
+  function pageCourses() {
+    const cards = orderedCourses().map((c) => {
+      const st = courseStats(c.course_id, null);
+      return `<div class="card">
+        <h2><a href="#/opleiding/${encodeURIComponent(c.course_id)}">${esc(c.opleiding)}</a></h2>
+        <p class="sub">${c.verplichte_modules} verplichte modules · ${c.certificate_name ? `certificaat ${esc(c.certificate_name)}, ${c.cert_geldig_maanden} maanden geldig` : "geen certificaat ingesteld"}</p>
+        <div style="margin-top:12px">${stateStack(st)}</div>
+        <div class="grid" style="grid-template-columns:repeat(4,minmax(0,1fr));margin-top:12px">
+          <div><div class="lbl">Ingeschreven</div><div class="h" style="font-size:22px;font-weight:700">${st.n}</div></div>
+          <div><div class="lbl">Afgerond</div><div class="h" style="font-size:22px;font-weight:700">${st.afgerond}</div></div>
+          <div><div class="lbl">Voortgang</div><div class="h" style="font-size:22px;font-weight:700">${num(st.voortgang)}%</div></div>
+          <div><div class="lbl">Behaald</div><div class="h" style="font-size:22px;font-weight:700">${st.behaald}</div></div>
+        </div>
+        <p class="note">${st.open} deelnemers moeten het certificaat nog behalen${st.verloopt ? `, bij ${st.verloopt} verloopt het binnenkort` : ""}${st.verlopen ? `, bij ${st.verlopen} is het verlopen` : ""}.</p>
+        <p style="margin:12px 0 0"><a class="btn" href="#/opleiding/${encodeURIComponent(c.course_id)}">Opleiding openen</a></p></div>`;
+    }).join("");
+    return `<div class="pagehead"><div><h1>Opleidingen</h1><p class="sub">Een opleiding is een cursus in The Huddle, met het certificaat dat je ermee behaalt</p></div></div>
+      <div class="grid two">${cards || '<p class="empty">Nog geen opleidingen ontvangen.</p>'}</div>`;
+  }
+
+  function pageCourse(id, params) {
+    const c = DATA.v_course_summary.find((x) => x.course_id === id);
+    if (!c) return `<a class="back" href="#/opleidingen">← Opleidingen</a><p>Opleiding niet gevonden.</p>`;
+    const group = params.get("groep") || "";
+    const memberIds = group ? new Set(membersOf(group).map((m) => m.huddle_id)) : null;
+    const st = courseStats(id, memberIds);
+    const filter = params.get("stand") || "Alle";
+    const byId = Object.fromEntries(DATA.v_member_status.map((m) => [m.huddle_id, m]));
+    let rows = st.rows;
+    if (filter === "Nog te behalen") rows = rows.filter((e) => e.certificaat_status === "Open" || e.certificaat_status === "Verlopen");
+    else if (filter !== "Alle") rows = rows.filter((e) => e.opleiding_status === filter);
+    rows = [...rows].sort(by("voortgang_pct", -1));
+    const base = `#/opleiding/${encodeURIComponent(id)}?${group ? "groep=" + encodeURIComponent(group) + "&" : ""}stand=`;
+    const chips = [["Alle", st.n], ["Bezig", st.bezig], ["Vastgelopen", st.vast], ["Afgerond", st.afgerond], ["Nog te behalen", st.open + st.verlopen]]
+      .map(([l, n]) => `<a class="chip" style="text-decoration:none;color:inherit;display:inline-flex;align-items:center" aria-pressed="${l === filter}" href="${base}${encodeURIComponent(l)}">${esc(l)} · ${n}</a>`).join("");
+    const opts = [`<option value="">Alle groepen</option>`, ...[...DATA.groups].filter((g) => !g.hidden).sort(by("name"))
+      .map((g) => `<option value="${esc(g.id)}" ${g.id === group ? "selected" : ""}>${esc(g.name)}</option>`)].join("");
+    const trs = rows.map((e) => {
+      const m = byId[e.member_id] || {};
+      const href = `#/lid/${encodeURIComponent(e.member_id)}`;
+      return `<tr class="click" data-href="${href}">
+        <td><a href="${href}">${esc(m.naam || m.email || e.member_id)}</a><small>${esc(m.groepen || "")}</small></td>
+        <td>${pill(e.opleiding_status, OPL_CLASS[e.opleiding_status] || "Nooit")}</td>
+        <td style="min-width:140px">${progressBar(e.voortgang_pct)}</td>
+        <td>${e.modules_voltooid} van ${e.verplichte_modules}</td>
+        <td>${esc(fmtDate(e.gestart_op))}</td>
+        <td>${pill(e.certificaat_status, CERT_CLASS[e.certificaat_status] || "Nooit")}${e.certificaat_geldig_tot ? `<small>geldig tot ${esc(fmtDate(e.certificaat_geldig_tot))}</small>` : ""}</td></tr>`;
+    }).join("");
+    return `<div><a class="back" href="#/opleidingen">← Opleidingen</a>
+        <div class="pagehead"><div><h1>${esc(c.opleiding)}</h1><p class="sub">${c.verplichte_modules} verplichte modules · ${c.certificate_name ? `certificaat ${esc(c.certificate_name)}, ${c.cert_geldig_maanden} maanden geldig` : "geen certificaat ingesteld"}</p></div>
+        <div><label class="sr" for="cgrp">Groep</label><select id="cgrp" data-course="${esc(id)}">${opts}</select></div></div></div>
+      <div class="grid kpis">
+        <div class="card"><div class="lbl">Ingeschreven</div><div class="big">${st.n}</div><div class="note">${st.bezig} bezig, ${st.vast} vastgelopen</div></div>
+        <div class="card"><div class="lbl">Afgerond</div><div class="big">${st.afgerond} <small>van ${st.n}</small></div><div class="note">${pct(st.afgerond, st.n)}% van de deelnemers</div></div>
+        <div class="card"><div class="lbl">Gem. voortgang</div><div class="big">${num(st.voortgang)}${st.voortgang === null ? "" : "%"}</div><div class="note">over de verplichte modules</div></div>
+        <div class="card"><div class="lbl">Certificaat behaald</div><div class="big">${st.behaald} <small>van ${st.n}</small></div><div class="note">${st.open} nog te behalen${st.verloopt ? `, ${st.verloopt} verloopt binnenkort` : ""}</div></div>
+      </div>
+      <div class="card"><div class="cardhead"><h2>Deelnemers</h2></div><div class="filters" style="margin-bottom:12px">${chips}</div>
+        <div class="tablewrap"><table><thead><tr><th>Naam</th><th>Stand</th><th>Voortgang</th><th>Modules</th><th>Gestart</th><th>Certificaat</th></tr></thead>
+        <tbody>${trs || '<tr><td colspan="6" class="empty">Geen deelnemers in deze selectie.</td></tr>'}</tbody></table></div></div>
+      ${funnelCard(memberIds, "Waar haken deelnemers af?", id)}`;
+  }
+
   // ---------------------------------------------------------------- export
   function exportCsv() {
     const rows = DATA.v_member_status;
-    const cols = ["naam", "email", "groepen", "status", "dagen_inactief", "voortgang_pct", "modules_voltooid", "quiz_gehaald", "quizpogingen", "certificaat_status", "certificaat_geldig_tot"];
+    const cols = ["naam", "email", "groepen", "status", "dagen_inactief", "voortgang_pct", "modules_voltooid", "quiz_gehaald", "quizpogingen", "opleidingen", "certificaten_behaald", "certificaten_open"];
     const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const csv = [cols.join(";"), ...rows.map((r) => cols.map((c) => q(r[c])).join(";"))].join("\r\n");
     const a = document.createElement("a");
@@ -354,9 +485,9 @@
   }
 
   // ---------------------------------------------------------------- router
-  const NAV = [["#/", "Overzicht"], ["#/groepen", "Groepen"], ["#/leden", "Leden"], ["#/modules", "Modules"]];
+  const NAV = [["#/", "Overzicht"], ["#/opleidingen", "Opleidingen"], ["#/groepen", "Groepen"], ["#/leden", "Leden"], ["#/modules", "Modules"]];
   function renderNav(hash) {
-    const cur = hash.startsWith("#/groep") ? "#/groepen" : hash.startsWith("#/lid") || hash.startsWith("#/leden") ? "#/leden" : hash.startsWith("#/modules") ? "#/modules" : "#/";
+    const cur = hash.startsWith("#/opleiding") ? "#/opleidingen" : hash.startsWith("#/groep") ? "#/groepen" : hash.startsWith("#/lid") || hash.startsWith("#/leden") ? "#/leden" : hash.startsWith("#/modules") ? "#/modules" : "#/";
     document.getElementById("nav").innerHTML = NAV.map(([h, l]) => `<a href="${h}" ${h === cur ? 'aria-current="page"' : ""}>${l}</a>`).join("")
       + (sb ? '<a href="#" data-logout>Uitloggen</a>' : "");
   }
@@ -368,7 +499,9 @@
     const params = new URLSearchParams(qs || "");
     const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
     let html;
-    if (parts[0] === "groepen") html = pageGroups();
+    if (parts[0] === "opleidingen") html = pageCourses();
+    else if (parts[0] === "opleiding") html = pageCourse(parts[1], params);
+    else if (parts[0] === "groepen") html = pageGroups();
     else if (parts[0] === "groep") html = pageGroup(parts[1]);
     else if (parts[0] === "leden") html = pageMembers(params);
     else if (parts[0] === "lid") html = await pageMember(parts[1]);
@@ -402,6 +535,7 @@
     }
   });
   document.addEventListener("change", async (e) => {
+    if (e.target.id === "cgrp") { location.hash = `#/opleiding/${encodeURIComponent(e.target.dataset.course)}${e.target.value ? "?groep=" + encodeURIComponent(e.target.value) : ""}`; }
     if (e.target.id === "grp") { location.hash = `#/leden?status=${encodeURIComponent(state.filter)}${e.target.value ? "&groep=" + encodeURIComponent(e.target.value) : ""}`; }
     const req = e.target.dataset && e.target.dataset.required;
     if (req) {
