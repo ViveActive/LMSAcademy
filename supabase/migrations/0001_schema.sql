@@ -2,6 +2,7 @@
 -- Alle webhookberichten worden eerst onbewerkt bewaard (huddle_events) en daarna
 -- verwerkt in overzichtstabellen. Opnieuw verwerken kan altijd met reprocess_all().
 
+-- pgcrypto staat in Supabase in het schema extensions
 create extension if not exists pgcrypto;
 
 -- ---------------------------------------------------------------------------
@@ -311,7 +312,7 @@ end $$;
 
 -- Ontvangen en verwerken in één aanroep (gebruikt door de webhook-functie)
 create or replace function ingest_event(p_trigger_type text, p_payload jsonb) returns bigint
-language plpgsql security definer set search_path = public as $$
+language plpgsql security definer set search_path = public, extensions as $$
 declare new_id bigint; key text;
 begin
   key := encode(digest(p_payload::text, 'sha256'), 'hex');
