@@ -489,7 +489,7 @@
   function renderNav(hash) {
     const cur = hash.startsWith("#/opleiding") ? "#/opleidingen" : hash.startsWith("#/groep") ? "#/groepen" : hash.startsWith("#/lid") || hash.startsWith("#/leden") ? "#/leden" : hash.startsWith("#/modules") ? "#/modules" : "#/";
     document.getElementById("nav").innerHTML = NAV.map(([h, l]) => `<a href="${h}" ${h === cur ? 'aria-current="page"' : ""}>${l}</a>`).join("")
-      + (sb ? '<a href="#" data-logout>Uitloggen</a>' : "");
+      + (sb ? `<a href="#/wachtwoord" ${hash === "#/wachtwoord" ? 'aria-current="page"' : ""}>Wachtwoord</a><a href="#" data-logout>Uitloggen</a>` : "");
   }
 
   async function route() {
@@ -506,6 +506,7 @@
     else if (parts[0] === "leden") html = pageMembers(params);
     else if (parts[0] === "lid") html = await pageMember(parts[1]);
     else if (parts[0] === "modules") html = pageModules();
+    else if (parts[0] === "wachtwoord" && sb) html = pagePassword();
     else html = pageOverview();
     app.innerHTML = html;
     if (!hash.startsWith("#/leden")) window.scrollTo(0, 0);
@@ -559,16 +560,45 @@
   // ---------------------------------------------------------------- login en start
   function loginPage(msg) {
     document.getElementById("nav").innerHTML = "";
-    app.innerHTML = `<div class="card login"><h1>Inloggen</h1><p class="sub">Alleen voor beheerders. Je krijgt een inloglink per e-mail.</p>
-      <form id="login"><label for="email">E-mailadres</label><input id="email" type="email" required autocomplete="email">
-      <button class="btn pri" type="submit">Stuur inloglink</button></form><p class="note" id="loginmsg">${esc(msg || "")}</p></div>`;
+    app.innerHTML = `<div class="card login"><h1>Inloggen</h1><p class="sub">Alleen voor beheerders.</p>
+      <form id="login"><label for="email">E-mailadres</label><input id="email" type="email" required autocomplete="username">
+      <label for="password">Wachtwoord</label><input id="password" type="password" required autocomplete="current-password">
+      <button class="btn pri" type="submit">Inloggen</button></form>
+      <p class="note"><a href="#" data-maillink>Wachtwoord vergeten? Stuur me een inloglink</a></p>
+      <p class="note" id="loginmsg" role="status">${esc(msg || "")}</p></div>`;
+    const msgEl = () => document.getElementById("loginmsg");
     document.getElementById("login").addEventListener("submit", async (e) => {
       e.preventDefault();
-      const email = document.getElementById("email").value;
+      const email = document.getElementById("email").value.trim();
+      const password = document.getElementById("password").value;
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      if (error) { msgEl().textContent = "Inloggen lukte niet. Controleer je e-mailadres en wachtwoord."; return; }
+      location.reload();
+    });
+    app.querySelector("[data-maillink]").addEventListener("click", async (e) => {
+      e.preventDefault();
+      const email = document.getElementById("email").value.trim();
+      if (!email) { msgEl().textContent = "Vul eerst je e-mailadres in."; return; }
       const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname, shouldCreateUser: false } });
-      document.getElementById("loginmsg").textContent = error ? `Dat lukte niet: ${error.message}` : "Check je mail voor de inloglink.";
+      msgEl().textContent = error ? `Dat lukte niet: ${error.message}` : "Check je mail. Na het inloggen stel je via \"Wachtwoord\" in het menu een nieuw wachtwoord in.";
     });
   }
+
+  function pagePassword() {
+    return `<div class="card login"><h1>Wachtwoord instellen</h1><p class="sub">Kies een wachtwoord van minimaal 8 tekens.</p>
+      <form id="pwform"><label for="pw1">Nieuw wachtwoord</label><input id="pw1" type="password" minlength="8" required autocomplete="new-password">
+      <label for="pw2">Herhaal wachtwoord</label><input id="pw2" type="password" minlength="8" required autocomplete="new-password">
+      <button class="btn pri" type="submit">Opslaan</button></form><p class="note" id="pwmsg" role="status"></p></div>`;
+  }
+  document.addEventListener("submit", async (e) => {
+    if (e.target.id !== "pwform") return;
+    e.preventDefault();
+    const a = document.getElementById("pw1").value, b = document.getElementById("pw2").value;
+    const out = document.getElementById("pwmsg");
+    if (a !== b) { out.textContent = "De wachtwoorden zijn niet gelijk."; return; }
+    const { error } = await sb.auth.updateUser({ password: a });
+    out.textContent = error ? `Dat lukte niet: ${error.message}` : "Opgeslagen. Je kunt voortaan inloggen met dit wachtwoord.";
+  });
 
   async function start() {
     const cfg = window.APP_CONFIG;
