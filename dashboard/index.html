@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voortgang Mastertrainer Academy</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+  <!-- config.js zet window.APP_CONFIG = { supabaseUrl, supabaseAnonKey }. Ontbreekt die, dan draait de demo. -->
+  <script src="config.js" onerror="window.APP_CONFIG = null"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <a class="brand" href="#/">
+        <span class="logo" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"></path><path d="M15 7h6v6"></path></svg></span>
+        <span><span class="h" style="font-size:17px;font-weight:600">Mastertrainer Academy</span><small>Beheer · Voortgang</small></span>
+      </a>
+      <nav class="main" aria-label="Hoofdmenu" id="nav"></nav>
+    </div>
+  </header>
+  <div class="banner" id="banner" hidden><div class="wrap" id="bannerText"></div></div>
+  <main class="wrap" id="app" aria-live="polite"><p class="empty">Laden…</p></main>
+  <script src="app.js"></script>
+</body>
+</html>

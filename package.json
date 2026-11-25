@@ -1,0 +1,11 @@
+{
+  "name": "lmsacademy",
+  "private": true,
+  "description": "Voortgangsrapportage naast The Huddle",
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --no-warnings --test test/handler.test.ts test/import-csv.test.mjs",
+    "test:db": "scripts/test-db.sh",
+    "demo": "python3 -m http.server 8000 --directory dashboard"
+  }
+}
