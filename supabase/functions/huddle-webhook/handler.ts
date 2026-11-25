@@ -3,11 +3,17 @@
 
 export type Ingest = (triggerType: string | null, payload: unknown) => Promise<{ id: number | null; error?: string }>;
 
+export function givenToken(req: Request): string {
+  const header = req.headers.get("x-webhook-token") ?? "";
+  const bearer = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  const query = new URL(req.url).searchParams.get("token") ?? "";
+  return (header || query || bearer).trim();
+}
+
 export function tokenMatches(req: Request, expected: string): boolean {
   if (!expected) return false;
-  const header = req.headers.get("x-webhook-token") ?? "";
-  const query = new URL(req.url).searchParams.get("token") ?? "";
-  const given = header || query;
+  expected = expected.trim();
+  const given = givenToken(req);
   if (given.length !== expected.length) return false;
   // vergelijking in constante tijd
   let diff = 0;
@@ -17,7 +23,18 @@ export function tokenMatches(req: Request, expected: string): boolean {
 
 export async function handle(req: Request, secret: string, ingest: Ingest): Promise<Response> {
   if (req.method !== "POST") return new Response("Alleen POST", { status: 405 });
-  if (!tokenMatches(req, secret)) return new Response("Geen toegang", { status: 401 });
+  if (!tokenMatches(req, secret)) {
+    // Geen geheimen loggen, alleen waar het aan ligt.
+    console.warn("token geweigerd", JSON.stringify({
+      geheim_ingesteld: secret.trim().length > 0,
+      geheim_lengte: secret.trim().length,
+      header_aanwezig: req.headers.has("x-webhook-token"),
+      query_aanwezig: new URL(req.url).searchParams.has("token"),
+      ontvangen_lengte: givenToken(req).length,
+      headernamen: [...req.headers.keys()].filter((k) => !k.startsWith("cf-") && !k.startsWith("x-forwarded")),
+    }));
+    return new Response("Geen toegang", { status: 401 });
+  }
 
   let payload: unknown;
   try {
